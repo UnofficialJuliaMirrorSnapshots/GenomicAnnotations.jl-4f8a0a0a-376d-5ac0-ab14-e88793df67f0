@@ -3,7 +3,8 @@ abstract type AbstractGene end
 
 """
 Struct for storing information on genomic locations. `strand` can be '+', '-',
-or '.' when the strand is irrelevant.
+or '.' when the strand is irrelevant. `order` is used to store discontiguous
+sequences, indicated in the GenBank file with the order() and join() operators.
 """
 struct Locus
     position::UnitRange{Int}
@@ -11,6 +12,7 @@ struct Locus
     complete_left::Bool
     complete_right::Bool
     order::Vector{UnitRange{Int}}
+    join::Bool
 end
 
 
@@ -20,10 +22,10 @@ end
     Locus(position::UnitRange{Int}, strand::Char)
 
 """
-Locus() = Locus(1:1, '.', true, true, UnitRange{Int}[])
-Locus(position::UnitRange{Int}) = Locus(position, '.', true, true, UnitRange{Int}[])
-Locus(position::UnitRange{Int}, strand::Char) = Locus(position, strand, true, true, UnitRange{Int}[])
-Locus(position::UnitRange{Int}, strand::Char, complete_left, complete_right) = Locus(position, strand, complete_left, complete_right, UnitRange{Int}[])
+Locus() = Locus(1:1, '.', true, true, UnitRange{Int}[], false)
+Locus(position::UnitRange{Int}) = Locus(position, '.', true, true, UnitRange{Int}[], false)
+Locus(position::UnitRange{Int}, strand::Char) = Locus(position, strand, true, true, UnitRange{Int}[], false)
+Locus(position::UnitRange{Int}, strand::Char, complete_left, complete_right) = Locus(position, strand, complete_left, complete_right, UnitRange{Int}[], false)
 
 Base.convert(::Type{Locus}, x::UnitRange{Int}) = Locus(x)
 function Base.convert(::Type{Locus}, x::StepRange{Int, Int})
@@ -35,6 +37,13 @@ function Base.convert(::Type{Locus}, x::StepRange{Int, Int})
     throw(DomainError(x, "`x` must have a step of 1 or -1"))
 end
 
+
+"""
+Struct for storing annotations for a single chromosome, plasmid, contig, etc.
+Contains five fields: `name`, `sequence`, `header`, `genes`, and `genedata`.
+Annotations are stored as a `DataFrame` in `genedata`, but can be accessed
+more easily through `genes` using the API provided in this module.
+"""
 mutable struct Chromosome{G <: AbstractGene}
     name::String
     sequence::LongDNASeq
@@ -59,7 +68,15 @@ end
 """
     addgene!(chr::Chromosome, feature, locus; kw...)
 
-Add gene to `chr`. `locus` can be a `Locus`, a UnitRange, or a StepRange.
+Add gene to `chr`. `locus` can be a `Locus`, a UnitRange, or a StepRange (for
+decreasing ranges, which will be annotated on the complementary strand).
+
+# Example
+```julia
+addgene!(chr, "CDS", 1:756;
+    locus_tag = "gene0001",
+    product = "Chromosomal replication initiator protein dnaA")
+```
 """
 function addgene!(chr::Chromosome, feature, locus; kw...)
     locus = convert(Locus, locus)
@@ -92,6 +109,11 @@ end
     delete!(genes::AbstractArray{Gene, 1})
 
 Delete all genes in `genes` from `genes[1].parent`.
+
+# Example
+```julia
+delete!(@genes(chr, length(gene) <= 60))
+```
 """
 function Base.delete!(genes::AbstractArray{Gene, 1})
     indices = genes.index
@@ -126,7 +148,7 @@ end
 
 
 """
-    pushproperty!(gene::AbstractGene, name::Symbol, x::T)
+    pushproperty!(gene::AbstractGene, qualifier::Symbol, value::T)
 
 Add a property to `gene`, similarly to `Base.setproperty!(::gene)`, but if the
 property is not missing in `gene`, it will be transformed to store a vector
@@ -148,46 +170,46 @@ julia> eltype(chr.genedata[!, :EC_number])
 Union{Missing, Array{String,1}}
 ```
 """
-function pushproperty!(gene::AbstractGene, name::Symbol, x::T; forceany = true) where T
-    if hasproperty(gene.parent.genedata, name)
-        C = eltype(gene.parent.genedata[!, name])
+function pushproperty!(gene::AbstractGene, qualifier::Symbol, value::T; forceany = true) where T
+    if hasproperty(gene.parent.genedata, qualifier)
+        C = eltype(gene.parent.genedata[!, qualifier])
         if T <: C
-            if ismissing(gene.parent.genedata[gene.index, name])
-                gene.parent.genedata[gene.index, name] = x
+            if ismissing(gene.parent.genedata[gene.index, qualifier])
+                gene.parent.genedata[gene.index, qualifier] = value
             else
-                gene.parent.genedata[!, name] = vectorise(gene.parent.genedata[!, name])
-                push!(gene.parent.genedata[gene.index, name], x)
+                gene.parent.genedata[!, qualifier] = vectorise(gene.parent.genedata[!, qualifier])
+                push!(gene.parent.genedata[gene.index, qualifier], value)
             end
         elseif Vector{T} <: C
-            if ismissing(gene.parent.genedata[gene.index, name])
-                gene.parent.genedata[gene.index, name] = [x]
+            if ismissing(gene.parent.genedata[gene.index, qualifier])
+                gene.parent.genedata[gene.index, qualifier] = [value]
             else
-                push!(gene.parent.genedata[gene.index, name], x)
+                push!(gene.parent.genedata[gene.index, qualifier], value)
             end
         elseif forceany && !(C <: AbstractVector)
-            if ismissing(gene.parent.genedata[gene.index, name])
-                gene.parent.genedata[!, name] = convert(Vector{Any}, gene.parent.genedata[!, name])
-                gene.parent.genedata[gene.index, name] = x
+            if ismissing(gene.parent.genedata[gene.index, qualifier])
+                gene.parent.genedata[!, qualifier] = convert(Vector{Any}, gene.parent.genedata[!, qualifier])
+                gene.parent.genedata[gene.index, qualifier] = value
             else
-                gene.parent.genedata[!, name] = vectorise(convert(Vector{Any}, gene.parent.genedata[! ,name]))
-                push!(gene.parent.genedata[gene.index, name], x)
+                gene.parent.genedata[!, qualifier] = vectorise(convert(Vector{Any}, gene.parent.genedata[! ,qualifier]))
+                push!(gene.parent.genedata[gene.index, qualifier], value)
             end
         elseif forceany && C <: AbstractVector
-            if ismissing(gene.parent.genedata[gene.index, name])
-                gene.parent.genedata[!, name] = convert(Vector{Any}, gene.parent.genedata[!, name])
-                gene.parent.genedata[gene.index, name] = [x]
+            if ismissing(gene.parent.genedata[gene.index, qualifier])
+                gene.parent.genedata[!, qualifier] = convert(Vector{Any}, gene.parent.genedata[!, qualifier])
+                gene.parent.genedata[gene.index, qualifier] = [value]
             else
                 @error "This shouldn't happen"
             end
         else
-            @error "Tried to add a '$T' to '$name::$(typeof(gene.parent.genedata[!, name]))'"
+            @error "Tried to add a '$T' to '$qualifier::$(typeof(gene.parent.genedata[!, qualifier]))'"
         end
     else
         s = size(gene.parent.genedata, 1)
-        gene.parent.genedata[!, name] = Vector{Union{Missing, T}}(missing, s)
-        gene.parent.genedata[gene.index, name] = x
+        gene.parent.genedata[!, qualifier] = Vector{Union{Missing, T}}(missing, s)
+        gene.parent.genedata[gene.index, qualifier] = value
     end
-    return x
+    return value
 end
 
 
@@ -210,6 +232,18 @@ end
     sequence(gene::AbstractGene)
 
 Return genomic sequence for `gene`.
+
+# Example
+The following code will write the translated sequences of all genes in `chr` to a file:
+```julia
+using FASTX
+writer = FASTA.Writer(open("proteins.fasta", "w"))
+for gene in @genes(chr, iscds)
+    aaseq = translate(sequence(gene))
+    write(writer, FASTA.record(gene.locus_tag, get(gene, :product, ""), aaseq))
+end
+close(writer)
+```
 """
 function sequence(gene::AbstractGene)
     ifelse(gene.locus.strand == '-',
@@ -291,7 +325,11 @@ function Base.show(io::IO, locus::Locus)
     locus.strand == '-'     && (s *= "complement(")
     !locus.complete_left    && (s *= ">")
     if length(locus.order) > 0
-        s *= "order(" * join([join((r.start, r.stop), "..") for r in locus.order], ",") * ")"
+        if locus.join
+            s *= "join(" * join([join((r.start, r.stop), "..") for r in locus.order], ",") * ")"
+        else
+            s *= "order(" * join([join((r.start, r.stop), "..") for r in locus.order], ",") * ")"
+        end
     else
         s *= join((locus.position.start, locus.position.stop), "..")
     end
@@ -328,6 +366,11 @@ function formatsequence(sequence, io = IOBuffer)
 end
 
 
+"""
+    printgbk([io], chr)
+
+Print `chr` in GenBank format.
+"""
 function printgbk(chrs::AbstractVector{C}) where {C <: Chromosome}
     io = IOBuffer()
     printgbk(io, chrs)

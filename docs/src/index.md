@@ -1,8 +1,8 @@
 # GenomicAnnotations.jl
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://kdyrhage.github.io/GenomicAnnotations.jl/dev)
 
 ## Description
 GenomicAnnotations is a package for reading, modifying, and writing genomic annotations in the GenBank format.
+
 
 ## Installation
 ```julia
@@ -16,8 +16,8 @@ Pkg.add("GenomicAnnotations")
 ```
 
 
-## Usage
-GenBank files are read with `readgbk(gbkfile)`, which returns a vector of `Chromosome`s. `gbkfile` can be gzipped as long as the filename ends in ".gz". If we're only interested in the first chromosome in `example.gbk` we only need to store the first element.
+## Examples
+GenBank files are read with `readgbk(pathtofile)`, which returns a vector of `Chromosome`s. `gbkfile` can be gzipped as long as the filename ends in ".gz". If we're only interested in the first chromosome in `example.gbk` we only need to store the first element.
 ```julia
 chr = readgbk("test/example.gbk")[1]
 ```
@@ -31,39 +31,9 @@ end
 chr.genes[2].locus_tag = "test123"
 ```
 
-Accessing properties that haven't been stored will return missing. For this reason, it often makes more sense to use `get()` than to access the property directly.
-```julia
-# chr.genes[2].pseudo returns missing, so this will throw an error
-if chr.genes[2].pseudo
-    println("Gene 2 is a pseudogene")
-end
-
-# ... but this works:
-if get(chr.genes[2], :pseudo, false)
-    println("Gene 2 is a pseudogene")
-end
-```
-
 The macro `@genes` can be used to filter through the annotations. The keyword `gene` is used to refer to the individual `Gene`s. `@genes` can also be used to modify annotations.
 ```julia
-@genes(chr, :feature == "CDS")  # Returns all coding regions
 @genes(chr, length(gene) > 300) # Returns all features longer than 300 nt
-@genes(chr, iscomplement(gene)) # Returns all features on the complement strand
-
-# Some short-hand forms are available to make life easier:
-#     `iscds` expands to `:feature == "CDS"`, and
-#     `get(s::Symbol, default)` expands to `get(gene, s, default)`
-# The following two are thus equivalent:
-@genes(chr, :feature == "CDS", occursin("glycoprotein", get(gene, :product, "")))
-@genes(chr,             iscds, occursin("glycoprotein", get(      :product, "")))
-
-# All arguments have to evaluate to `true` for a gene to be included, so the following expressions are equivalent:
-@genes(chr, :feature == "CDS", length(gene) > 300)
-@genes(chr, (:feature == "CDS") && (length(gene) > 300))
-
-# `@genes` returns a `Vector{Gene}`. Attributes can be accessed with dot-syntax, and can be assigned to
-@genes(chr, :locus_tag == "tag03")[1].pseudo = true
-@genes(chr, iscds, ismissing(:gene)).gene .= "unknown"
 ```
 
 Gene sequences can be accessed with `sequence(gene)`. For example, the following code will write the translated sequences of all protein-coding genes to a file:
